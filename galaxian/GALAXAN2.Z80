@@ -1,0 +1,2468 @@
+;******* Galaxian - Copyright 1999
+;******** by Patrick Davidson/Sam Heald
+
+	.nolist		
+	#include "ion.inc"
+	.list		
+#ifdef TI83P		
+	.org progstart-2
+	.db $BB,$6D
+
+TEXT_MEM  = $8508
+APD_BUF   = $86EC
+
+#else		
+	.org progstart
+
+TEXT_MEM  = $80c9
+APD_BUF   = $8265
+
+#endif		
+		xor a	
+		jr nc,Start
+progdesc:	.db "Galaxian v1.0",0
+
+; *************** Variables************************************************
+#DEFINE LOCATE(xc,yc)    ld de,(xc*256)+yc \ ld (CURROW),de
+#DEFINE GRAPH_MEM       plotsscreen 
+
+score             =APD_BUF
+lives             =APD_BUF+2
+level             =APD_BUF+4
+x                 =APD_BUF+6
+y                 =APD_BUF+7
+lasers            =APD_BUF+8
+ybullets          =APD_BUF+10
+ebuls             =APD_BUF+40
+enemies           =APD_BUF+70
+boss_status       =APD_BUF+150
+boss_pwr          =APD_BUF+151
+boss_x            =APD_BUF+152
+boss_y            =APD_BUF+153
+boss_2bytes       =APD_BUF+155
+timer             =APD_BUF+156
+your_status       =APD_BUF+157
+enemies_remaining =APD_BUF+158
+warped_status     =APD_BUF+159
+storage_length    =161
+
+; *************** Level Data***********************************************
+
+enemy_coords      =APD_BUF+256+1
+enemy_image       =APD_BUF+256+41
+boss_image        =APD_BUF+256+43
+enemy_pwr         =APD_BUF+256+45
+
+; *************** Temporary Variables**************************************
+
+temp1             =APD_BUF+256+80
+temp              =APD_BUF+256+82
+next_type         =APD_BUF+256+84
+jpf1              =APD_BUF+256+85
+jpf2              =APD_BUF+256+86
+string		  =APD_BUF+256+88
+
+; *************** Initialize Control Flags*********************************
+
+Start: 
+	ld       de,APD_BUF+512
+	ld       hl,GRAPH_MEM+768
+	ld       bc,256
+	ldir
+	set      0,(iy+3)
+	ld       (iy+13),0
+	ld       (exit_game+1),sp
+title:
+	ld   hl,GRAPH_MEM
+	ld   de,GRAPH_MEM+1
+	ld     bc,960
+	ld     (hl),0
+	ldir
+
+	set 7, (iy+$14)     
+	ld       de,$2A04
+	ld       hl,copyright
+	call	putstr_v
+	
+	ld       de,$3102
+	call	putstr_v
+
+	ld       de,$3E0C
+	call   putstr_v
+
+	res 7, (iy+$14)        
+
+; *************** Main Loop************************************************
+	bcall(_clrlcdf)
+	ld hl,enemy_pics 
+	ld de,GRAPH_MEM + 396 
+	ld bc,96   
+	ldir       
+
+	call dgraphic2
+	ld de,0
+main_loop:
+	inc de                ;crude but working screen flasher/switcher
+	ld hl,250            ;Derrick A. Ward       3-7
+	bcall(_CPHLDE)                   
+	call z,dgraphic2      
+	ld hl,500
+	bcall(_CPHLDE)
+	call z,dgraphic1
+	push de                           
+	bcall(_getK)
+	pop de
+	cp       $0F
+	jp       z,exit_game
+	cp       9
+	jr       nz,main_loop
+	call play_game
+	call game_over
+
+	bcall(_clrlcdf)
+	ld       de,$0000
+	ld       hl,hstitle
+	call   putstr
+	LOCATE(11,1)
+	ld       de,hsdata
+	ld       b,7                                       
+high_display_loop:
+#ifdef TI83P				                        ;Display high scores
+	ld       a,(de)
+	ld       l,a
+	inc      de
+	ld       a,(de)
+	ld       h,a
+	inc      de
+	push     de
+	bcall(_disphl)
+      ld hl,CURCOL
+      ld (hl),0
+	pop      hl
+	bcall(_puts)
+	ex       de,hl
+      ld hl,CURROW
+      inc (hl)
+      ld a,11
+      ld (CURCOL),a
+	djnz     high_display_loop
+      jp wait_key
+#else
+	ld       a,(de)
+	ld       l,a
+	inc      de
+	ld       a,(de)
+	ld       h,a
+	inc      de
+	push     de
+	bcall(_disphl)
+      ld hl,CURROW
+      dec (hl)
+	pop      hl
+	bcall(_puts)
+	ex       de,hl
+      ld hl,CURROW
+      inc (hl)
+	djnz     high_display_loop
+ #endif
+wait_key:
+	call OTH_PAUSE
+	jp title 
+        
+dgraphic2:
+	ld hl,initial_pic  
+	jr dgraphic
+dgraphic1:
+	ld hl,initial_pic2
+	ld de,0       
+dgraphic:
+	push de
+	halt 
+	ld de,GRAPH_MEM + 192 
+	ld bc,192   
+	ldir        
+	call Display_Screen  ;display graph
+	pop de
+	ret
+ 
+
+; *************** Exit The Game********************************************
+exit_game:
+	ld       sp,0
+	ld       hl,APD_BUF+512
+	ld       de,GRAPH_MEM+768
+	ld       bc,256
+	ldir
+	ld (iy+13),%00000110
+	ret
+
+; **************** High-Score Handling*************************************
+
+game_over:                          ;Set up score page
+         ld       hl,(lowest)      ;See if ya got a hi-score
+         ld       de,(score)
+         bcall(_CPHLDE)
+         ret      nc
+         bcall(_clrlcdf)
+         ld       de,0
+         ld       hl,hi_score_str
+         call     putstr
+         ld       hl,lowest+2
+         ld       (temp),hl
+         ld       b,11
+space_loop:
+         ld       (hl),32
+         inc      hl
+         djnz     space_loop
+         ld       ix,(temp)
+         ld       b,0
+enter_name_loop:
+	   push bc
+         bcall(_getK)
+ 	   pop bc
+         or       a
+         jr       z,enter_name_loop
+         cp       $38
+         jr       z,backup
+         cp       $09
+         jr       z,nomore
+         ld       c,a
+         ld       a,10
+         cp       b
+         jr       z,enter_name_loop
+         ld       hl,chartable-10
+         ld       e,c
+         ld       d,0
+         add      hl,de
+         ld       a,(hl)
+         ld       (ix),a
+         bcall(_putc) 
+         inc      b
+         inc      ix
+         jr       enter_name_loop
+backup:  dec      b
+         ld       a,255
+         cp       b
+         jr       z,too_far
+         dec      ix
+         ld       (ix),32
+         ld       hl,CURCOL
+         dec      (hl)
+         ld       a,32
+         bcall(_putc)
+         dec      (hl)
+         jr       enter_name_loop
+too_far: inc      b
+         jr       enter_name_loop
+nomore:
+         ld       hl,lowest
+         ld       de,(score)
+         ld       (hl),e
+         push     hl
+         inc      hl
+         ld       (hl),d
+         pop      ix              ; hiscore table
+         ld       b,6
+sort_scores:
+         ld       e,(ix)
+         ld       d,(ix+1)
+         ld       l,(ix-14)
+         ld       h,(ix-13)
+         bcall(_CPHLDE)
+         ret      nc
+         push     bc
+         ld       b,14
+         ld       d,0
+exg_loop:ld       e,(ix)
+         ld       c,(ix-14)
+         ld       (ix),c
+         ld       (ix-14),e
+         inc      ix
+         inc      hl
+         djnz     exg_loop
+         ld       de,-28
+         add      ix,de
+         pop      bc
+         djnz     sort_scores
+	   ret
+ ; *************** Restore Saved Game***************************************
+
+
+restore: ld       (hl),0
+	 inc      hl
+	 ld       de,APD_BUF
+	 ld       bc,storage_length
+	 ldir
+	 call     Load_Level_Data
+	 jr       set_up_display
+
+ ; *************** Set Up Game Variables************************************
+
+play_game:
+	 ld       hl,saved_flag
+	 ld       a,(hl)
+	 or       a
+	 jr       nz,restore
+	 ld       hl,APD_BUF
+	 ld       (hl),0
+	 ld       de,APD_BUF+1
+	 ld       bc,storage_length
+	 ldir
+	 ld       a,9
+	 ld       (lasers),a
+	 ld       (lives),a
+	 ld       a,70
+	 ld       (x),a
+	 ld       (y),a
+ ; *************** Set Up Game Display **************************************
+
+set_up_display:
+ ; *************** Game Main Loop*******************************************
+
+game_main_loop:
+	 ld       a,(enemies_remaining)
+	 or       a
+	 call     z,Next_Level
+	 ld       hl,timer
+	 inc      (hl)
+
+	 xor      a
+	 ld       hl,GRAPH_MEM+(16*12)
+	 ld       b,a
+csl:     ld       (hl),a
+	 inc      hl
+	 ld       (hl),a
+	 inc      hl
+	 ld       (hl),a
+	 inc      hl
+	 djnz     csl
+
+	 call     You_Shoot
+	 call     You_Shoot_Laser
+	 call     Your_Ship
+	 call     Move_Your_Bullets
+	 call     Enemy_Swoop
+	 call     Handle_Enemies
+	 CALL     Enemies_Hit_You
+	 call     Boss
+	 call     Boss_Shoot
+	 call     Enemies_Shoot_You
+	 call     Move_Enemy_Bullets
+	 call     lasersdisplay
+	 call     Display_Screen
+	 call     Misc_Keys
+	 jr       game_main_loop
+
+ ; *************** Make Boss Shoot You**************************************
+
+Boss_Shoot:
+	 ld       a,(timer)
+	 and      63
+	 ret      nz
+	 ld       hl,boss_status
+	 ld       a,(hl)
+	 or       a
+	 ret      z
+	 ret      m
+	 inc      hl
+	 inc      hl
+	 ld       d,(hl)
+	 inc      hl
+	 ld       a,(hl)
+	 add      a,5
+	 ld       e,a
+	 push     de
+	 call     boss_shoot1
+	 ld       hl,(boss_image)
+	 ld       de,spr_boss_3
+	 bcall(_CPHLDE)
+	 jr       z,bosssuper
+	 pop      de
+	 ld       a,13
+	 add      a,d
+	 ld       d,a
+
+boss_shoot1:
+	 ld       b,10
+	 ld       hl,ebuls
+find_enemy_bullet2:
+	 ld       a,(hl)
+	 or       a
+	 jr       z,feb___2
+	 inc      hl
+	 inc      hl
+	 inc      hl
+	 djnz     find_enemy_bullet2
+	 ret
+
+feb___2:
+	 ld       (hl),1
+	 ld       a,(x)
+	 sub      d
+	 add      a,18
+	 jp       p,no_left_bossshoot
+	 ld       (hl),2
+	 add      a,18
+	 jp       p,no_left_bossshoot
+	 ld       (hl),4
+no_left_bossshoot:
+	 sub      54
+	 jp       m,no_right_bossshoot
+	 ld       (hl),3
+	 sub      18
+	 jp       m,no_right_bossshoot
+	 ld       (hl),5
+no_right_bossshoot:
+	 inc      hl
+	 ld       (hl),d
+	 inc      hl
+	 ld       (hl),e
+	 ret
+bosssuper:
+	 pop      de
+	 push     de
+	 ld       a,10
+	 add      a,d
+	 ld       d,a
+	 call     boss_shoot1
+	 pop      de
+	 push     de
+	 ld       a,20
+	 add      a,d
+	 ld       d,a
+	 call     boss_shoot1
+	 pop      de
+	 ld       a,30
+	 add      a,d
+	 ld       d,a
+	 jp       boss_shoot1
+ ; *************** Move the Boss********************************************
+deploy_enemies:
+	 ld       a,r                        ;Spit out enemies
+	 cp       7
+	 ret      p
+	 and      7
+	 add      a,a
+	 add      a,a
+	 ld       b,0
+	 ld       c,a
+	 ld       hl,enemies
+	 add      hl,bc                      ;HL -> slot in enemy data
+	 ld       a,(hl)
+	 or       a
+	 ret      nz                         ;Return if enemy not destroyed
+	 ld       (hl),11                    ;Type to 11 (swooping)
+	 inc      hl
+	 ld       a,(enemy_pwr)
+	 ld       (hl),a                     ;Load enemy's power
+	 inc      hl
+	 ld       a,(boss_x)
+	 add      a,12
+	 ld       (hl),a                     ;Load enemy X coordinate
+	 inc      hl
+	 ld       (hl),24                    ;Load enemy Y coordinate
+	 ld       hl,enemies_remaining
+	 inc      (hl)                       ;One more enemy remaining
+	 ld       de,-200                    ;Remove points
+	 jp       sub_score
+
+boss_5:  dec      (hl)                       ;Superboss left to X=0
+	 ret      nz
+	 dec      hl
+	 dec      hl
+	 ld       (hl),6
+	 ret
+
+boss_6:  inc      hl
+	 ld       a,(hl)
+	 cp       16
+	 jr       z,sbpok
+	 inc      (hl)
+	 dec      hl
+	 dec      hl
+	 dec      hl
+	 ret
+sbpok:   dec      hl
+	 inc      (hl)                       ;superboss right to X=65
+	 ld       a,(hl)
+	 cp       65
+	 ret      nz
+	 dec      hl
+	 dec      hl
+	 ld       (hl),5
+	 ret
+
+Boss:    ld       hl,boss_status
+	 ld       a,(hl)
+	 or       a
+	 ret      z
+	 jp       m,boss_explode
+
+	 inc      hl
+	 inc      hl
+	 ld       ix,(boss_image)
+	 ld       d,(hl)
+	 inc      hl
+	 ld       e,(hl)
+	 call     drw_sprw
+	 ld       hl,boss_status
+	 ld       a,(hl)
+	 inc      hl
+	 inc      hl
+	 dec      a
+	 jr       z,boss_1
+	 dec      a
+	 jr       z,boss_2
+	 dec      a
+	 jr       z,boss_3
+	 dec      a
+	 jr       z,boss_4
+	 ld       de,deploy_enemies
+	 push     de
+	 dec      a
+	 jr       z,boss_5
+	 jr       boss_6
+
+boss_4:  dec      (hl)                       ;Going left to X=0
+	 ret      nz
+	 dec      hl
+	 dec      hl
+	 ld       (hl),1
+	 ret
+
+boss_1:  inc      hl                         ;Going down to Y=20
+	 inc      (hl)
+	 ld       a,(hl)
+	 cp       20
+	 ret      nz
+boss_common:
+	 ld       hl,boss_status
+	 inc      (hl)
+	 ret
+
+boss_2:  inc      (hl)                       ;Going right to X=80
+	 ld       a,(hl)
+	 cp       80
+	 ret      nz
+	 jr       boss_common
+
+boss_3:  inc      hl                         ;Going up to X=16
+	 dec      (hl)
+	 ld       a,(hl)
+	 cp       16
+	 ret      nz
+	 jr       boss_common
+
+
+boss_explode:
+	 inc      hl
+	 push     hl
+	 ld       a,(hl)
+	 call     explosion_stuff
+	 pop      hl
+	 inc      hl
+	 ld       a,(hl)
+	 push     af
+	 push     hl
+	 add      a,8
+	 ld       (hl),a
+	 dec      hl
+	 ld       a,(hl)
+	 call     explosion_stuff
+	 pop      hl
+	 pop      af
+	 ld       (hl),a
+	 dec      hl
+	 ld       a,(hl)
+	 cp       15
+	 jr       z,blown_up_enemyb
+	 inc      a
+	 ld       (hl),a
+	 ret
+
+blown_up_enemyb:
+	 dec      hl
+	 ld       (hl),0
+	 ld       hl,enemies_remaining
+	 dec      (hl)
+	 ld       hl,(score)
+	 ld       de,1000
+	 add      hl,de
+	 ld       (score),hl
+	 ret
+
+ ; *************** Enemies Hit You******************************************
+
+Enemies_Hit_You:
+	 ld       a,(your_status)
+	 or       a
+	 ret      nz
+	 ld       de,(x)                     ;E = X, D = Y
+	 ld       hl,enemies
+	 ld       b,20
+lehy:    push     hl
+	 ld       a,(hl)
+	 or       a
+	 jr       z,noeyc
+	 inc      hl
+	 inc      hl
+	 ld       a,(hl)
+	 sub      e
+	 add      a,6
+	 jp       m,noeyc
+	 cp       12
+	 jr       nc,noeyc
+	 inc      hl
+	 ld       a,(hl)
+	 sub      d
+	 add      a,6
+	 jp       m,noeyc
+	 cp       12
+	 jr       nc,noeyc
+	 dec      hl
+	 dec      hl
+	 ld       (hl),0
+	 dec      hl
+	 ld       (hl),4
+	 pop      hl
+	 jp       damage_you
+noeyc:   pop      hl
+	 inc      hl
+	 inc      hl
+	 inc      hl
+	 inc      hl
+	 djnz     lehy
+	 ret
+
+ ; *************** Make Enemies Swoop Down**********************************
+
+Enemy_Swoop:
+	 ld       a,(timer)
+	 and      3
+	 cp       2
+	 ret      nz
+	 ld       a,r
+	 and      127
+	 cp       19
+	 ret      p
+
+	 add      a,a
+	 add      a,a
+	 ld       c,a
+	 ld       b,0
+	 ld       hl,enemies
+	 add      hl,bc
+	 ld       a,(hl)
+	 cp       3
+	 ret      nz
+
+	 ld       a,r
+	 and      1
+	 add      a,5
+	 ld       (hl),a
+	 inc      hl
+	 inc      hl
+	 ld       a,(hl)
+	 dec      hl
+	 dec      hl
+	 bit      6,a
+	 jr       nz,force_left
+	 bit      5,a
+	 ret      nz
+	 ld       (hl),5
+	 ret
+force_left:
+	 ld       (hl),6
+	 ret
+
+ ; *************** Make Enemies Shoot You
+;***********************************
+
+Enemies_Shoot_You:
+	 ld       a,r
+	 and      127
+	 cp       19
+	 ret      p
+
+	 add      a,a
+	 add      a,a
+	 ld       c,a
+	 ld       b,0
+	 ld       hl,enemies
+	 add      hl,bc
+	 ld       a,(hl)
+	 or       a
+	 ret      z
+	 dec      a
+	 ret      z
+	 inc      hl
+	 inc      hl
+	 ld       d,(hl)
+	 inc      d
+	 inc      hl
+	 ld       a,(hl)
+	 add      a,5
+	 ld       e,a
+
+	 call     test_operator
+	 jp       z,boss_shoot1
+
+	 ld       b,10
+	 ld       hl,ebuls
+find_enemy_bullet:
+	 ld       a,(hl)
+	 or       a
+	 jr       z,feb___
+	 inc      hl
+	 inc      hl
+	 inc      hl
+	 djnz     find_enemy_bullet
+	 ret
+
+feb___:  ld       (hl),1
+	 inc      hl
+	 ld       (hl),d
+	 inc      hl
+	 ld       (hl),e
+	 ret
+
+ ; *************** Move Enemy Bullets
+;***************************************
+
+Move_Enemy_Bullets:
+	 ld       hl,ebuls
+	 ld       b,10
+leb:     push     bc
+	 push     hl
+	 ld       a,(hl)
+	 inc      hl
+	 dec      a
+	 jr       z,ebul1
+	 dec      a
+	 jr       z,ebul2
+	 dec      a
+	 jr       z,ebul3
+	 dec      a
+	 jr       z,ebul4
+	 dec      a
+	 jr       z,ebul5
+ebul_return:
+	 pop      hl
+	 pop      bc
+	 inc      hl
+	 inc      hl
+	 inc      hl
+	 djnz     leb
+	 ret
+
+
+ebul3:   ld       a,(timer)
+	 rra
+	 jr       c,ebul1
+ebul5:   inc      (hl)
+	 ld       a,(hl)
+	 cp       95
+	 jr       z,kill_enemy_bullet
+	 jr       ebul1
+
+ebul2:   ld       a,(timer)
+	 rra
+	 jr       c,ebul1
+ebul4:   dec      (hl)
+	 jr       z,kill_enemy_bullet
+
+ebul1:   ld       d,(hl)
+	 inc      hl
+	 ld       a,81
+	 cp       (hl)
+	 jr       z,kill_enemy_bullet
+	 inc      (hl)
+	 ld       e,(hl)
+	 ld       ix,spr_enemy_bullet
+	 call     drw_spr
+	 ld       a,(your_status)
+	 or       a
+	 jr       nz,ebul_return
+	 pop      hl
+	 push     hl
+
+	 inc      hl
+	 ld       a,(x)
+	 sub      (hl)
+	 add      a,6
+	 jp       m,ebul_return
+	 cp       9
+	 jr       nc,ebul_return
+
+	 inc      hl
+	 ld       a,(y)
+	 sub      (hl)
+	 add      a,6
+	 jp       m,ebul_return
+	 cp       9
+	 jr       nc,ebul_return
+
+	 call     damage_you
+
+kill_enemy_bullet:
+	 pop      hl
+	 push     hl
+	 ld       (hl),0
+	 jr       ebul_return
+
+ ; *************** Hit Your Ship
+;********************************************
+
+damage_you:
+
+	 ld       a,31
+	 ld       (your_status),a
+	 ld       hl,lives
+	 dec      (hl)
+	 ret
+ ; *************** Enemy Type 1 (Waiting to Descend)
+;************************
+
+enemy_type_1:
+	 ld       a,(timer)
+	 and      127
+	 or       %10000000
+
+	 ld       hl,enemy_coords-1
+	 add      hl,bc
+	 add      a,(hl)
+	 RET      NZ
+	 dec      hl
+	 ld       a,(hl)
+	 pop      BC
+	 POP      HL
+	 PUSH     HL
+	 push     BC
+	 ld       (hl),2
+	 inc      hl
+	 inc      hl
+	 ld       (hl),a
+	 inc      hl
+	 ld       (hl),0
+	 RET
+	 
+ ; *************** Move The Enemies
+;*****************************************
+
+Handle_Enemies:
+	 ld       hl,enemies
+	 ld       bc,40
+l_enemies:
+	 push     bc
+	 push     hl
+	 ld       ix,(enemy_image)
+	 ld       a,14
+	 cp       c
+	 jr       nc,no_i2
+	 ld       a,(boss_image)
+	 inc      a
+	 jr       nz,no_i2
+	 ld       ix,spr_enemy_1
+no_i2:
+	 ld       a,(hl)
+	 ld       de,enemy_return
+	 push     de
+
+	 dec      a
+	 jr       z,enemy_type_1
+	 dec      a
+	 jr       z,enemy_type_2
+	 dec      a
+	 jr       z,enemy_type_3
+	 dec      a
+	 jr       z,enemy_type_4
+	 dec      a
+	 jp       z,enemy_type_5
+	 dec      a
+	 jp       z,enemy_type_6
+	 dec      a
+	 jp       z,enemy_type_7
+	 dec      a
+	 jp       z,enemy_type_8
+	 dec      a
+	 jp       z,enemy_type_9
+	 dec      a
+	 jp       z,enemy_type_10
+	 dec      a
+	 jp       z,enemy_type_11
+	 dec      a
+	 jp       z,enemy_type_12
+	 dec      a
+	 jp       z,enemy_type_13
+	 pop      HL
+enemy_return:
+	 pop      hl
+	 pop      bc
+	 inc      hl
+	 inc      hl
+	 inc      hl
+	 inc      hl
+	 dec      c
+	 dec      c
+	 jr       nz,l_enemies
+	 ret
+
+ ; *************** Enemy Type 2 (Descending to Normal Position)
+;*************
+
+enemy_type_2:
+	 ld       a,(timer)
+	 add      a,a
+	 jr       z,make_type_3
+	 inc      hl
+	 inc      hl
+	 ld       d,(hl)
+	 inc      hl
+	 inc      (hl)
+ecommon_2:
+	 ld       e,(hl)
+	 JP       drw_spr
+
+make_type_3:
+	 ld       (hl),3
+
+ ; **************** Enemy Type 3 (Normal Pattern)
+;***************************
+
+enemy_type_3:
+	 Inc      hl
+	 inc      hl
+	 ld       a,(timer)
+	 rra
+	 jr       c,noslide
+	 inc      (hl)
+	 bit      5,a
+	 jr       z,noslide
+	 dec      (hl)
+	 dec      (hl)
+noslide: ld       d,(hl)
+	 inc      hl
+	 jr       ecommon_2
+
+ ; *************** Enemy Type 4 (Exploding)
+;*********************************
+
+enemy_type_4:
+	 inc      hl
+	 push     hl
+	 ld       a,(hl)
+
+	 call     explosion_stuff
+
+	 pop      hl
+	 ld       a,(hl)
+	 cp       15
+	 jr       z,blown_up_enemy
+	 inc      a
+	 ld       (hl),a
+	 RET
+
+blown_up_enemy:
+	 dec      hl
+	 ld       (hl),0
+	 ld       hl,enemies_remaining
+	 dec      (hl)
+	 ld       hl,(score)
+smc_scoring:
+	 ld       de,100
+	 add      hl,de
+	 ld       (score),hl
+	 RET
+
+ ; *************** Enemy Type 5 (Swooping Up + Right)
+;***********************
+
+enemy_type_5:
+	 ld       a,7
+	 ld       bc,$01FF
+enemy_common:
+	 inc      hl
+	 inc      hl
+
+	 ld       (next_type),a
+	 ld       a,b
+	 add      a,(hl)
+	 ld       (hl),a
+	 ld       d,a
+	 inc      hl
+	 ld       a,c
+	 add      a,(hl)
+	 ld       (hl),a
+	 ld       e,a
+	 call     drw_spr
+	 ld       a,(timer)
+	 and      3
+	 RET      nz
+	 POP      BC
+	 pop      hl
+	 push     hl
+	 PUSH     BC
+	 ld       a,(next_type)
+	 ld       (hl),a
+	 RET
+
+ ; *************** Enemy Type 6 (Swooping Up + Left)
+;************************
+
+enemy_type_6:
+	 ld       a,8
+	 ld       bc,$FFFF
+	 jr       enemy_common
+
+ ; *************** Enemy Type 7 (Swooping Right)
+;;****************************
+
+enemy_type_7:
+	 ld       a,9
+	 ld       bc,$0100
+	 jr       enemy_common
+
+ ; *************** Enemy Type 8 (Swooping Left)
+;*****************************
+
+enemy_type_8:
+	 ld       a,10
+	 ld       bc,$ff00
+	 jr       enemy_common
+
+ ; *************** Enemy Type 9 (Swooping Right / Down)
+;*********************
+
+enemy_type_9:
+	 ld       bc,$0101
+	 ld       a,11
+	 jr       enemy_common
+
+ ; *************** Enemy Type 10 (Swooping Left / Down)
+;*********************
+
+enemy_type_10:
+	 ld       bc,$ff01
+	 ld       a,11
+	 jr       enemy_common
+
+ ; *************** Enemy Type 11 (Swooping Down)
+;****************************
+
+enemy_type_11:
+	 ld       a,12
+	 ld       bc,$0001
+	 jr       enemy_common
+
+ ; *************** Enemy Type 12 (Swooping Down Quickly)
+
+enemy_type_12:
+	 inc      hl
+	 inc      hl
+	 ld       d,(hl)
+	 inc      hl
+	 inc      (hl)
+	 inc      (hl)
+	 ld       e,(hl)
+	 ld       a,78
+	 cp       e
+	 jr       c,enemy_restore
+	 JP       drw_spr
+	    
+enemy_restore:
+	 POP      BC
+	 pop      hl
+	 push     hl
+	 PUSH     BC
+	 ld       (hl),1
+	 ld       de,-1
+
+; *************** Subtract DE points from score *****************************
+
+sub_score:
+	 push     hl
+	 ld       hl,(score)
+	 add      hl,de
+	 jr       nc,zero
+	 ld       (score),hl
+	 pop      hl
+	 ret
+zero:    sbc hl,hl
+	 ld       (score),hl
+	 pop      hl
+	 ret
+
+
+
+ ; *************** Enemy Type 13 (Warp Enemy)
+;*******************************
+
+enemy_type_13:
+	 inc      hl
+	 inc      hl
+	 ld       a,(hl)
+	 inc      hl
+	 inc      hl
+	 inc      hl
+	 add      a,(hl)
+	 ld       d,a
+
+	 cp       1
+	 jr       nz,et13_not_x_2
+	 ld       (hl),1
+et13_not_x_2:
+	 cp       23
+	 jr       nz,et13_not_x_23
+	 ld       (hl),1
+	 ld       a,r
+	 rra
+	 jr       c,et13_not_x_23
+	 ld       (hl),-1
+et13_not_x_23:
+	 cp       45
+	 jr       nz,et13_not_x_45
+	 ld       (hl),1
+	 ld       a,r
+	 rra
+	 jr       c,et13_not_x_45
+	 ld       (hl),-1
+et13_not_x_45:
+	 cp       87
+	 jr       nz,et13_not_x_87
+	 ld       (hl),-1
+et13_not_x_87:
+
+	 dec      hl
+	 dec      hl
+	 dec      hl
+	 ld       (hl),d
+
+	 inc      hl
+	 ld       a,(hl)
+	 inc      hl
+	 inc      hl
+	 inc      hl
+	 add      a,(hl)
+	 jr       z,et13_gone
+
+	 ld       e,a
+
+	 cp       15
+	 jr       nz,et13_not_y_15
+	 ld       (hl),1
+et13_not_y_15:
+	 cp       27
+
+	 jr       nz,et13_not_y_27
+	 ld       (hl),1
+	 ld       a,r
+	 rra
+	 jr       c,et13_not_y_27
+	 ld       (hl),-1
+et13_not_y_27:
+	 cp       39
+	 jr       nz,et13_not_y_39
+	 ld       (hl),-1
+	 ld       a,r
+	 rra
+	 jr       c,et13_not_y_39
+	 rra
+	 jr       c,et13_not_y_39
+
+	 call     test_operator
+	 jr       z,et13_not_y_39
+
+	 bit      3,c
+	 jr       z,et13_not_y_39
+
+	 ld       (hl),-2
+	 dec      e
+et13_not_y_39:
+
+	 dec      hl
+	 dec      hl
+	 dec      hl
+	 ld       (hl),e
+	 
+	 jp       drw_spr
+et13_gone:
+	 pop      bc
+	 pop      hl
+	 push     hl
+	 push     bc
+	 ld       (hl),a
+	 ld       hl,enemies_remaining
+	 dec      (hl)
+	 ld       de,-50
+         jp     sub_score
+         
+test_operator:
+	 push     hl
+	 push     de
+	 ld       hl,(enemy_image)
+	 ld       de,enemy_o
+	 bcall(_CPHLDE)
+	 pop      de
+	 pop      hl
+	 ret               
+
+ ; *************** Shoot Your Lasers
+;****************************************
+
+You_Shoot_Laser:
+	 ld       a,$DF
+	 out      (1),a            ;Write mask to keypad ports
+
+	 ld       a,(your_status)  ;Exit shoot routine if ship is exploding
+	 or       a     
+	 ret      nz
+
+	 ld       hl,jpf2                    ;Test if F2 clicked
+	 in       a,(1)
+	 bit      7,a
+	 jr       z,pressed2
+	 ld       (hl),0
+	 ret
+
+pressed2:
+	    ld       a,(hl)
+	  or       a
+	  ret      nz
+	  ld       (hl),1
+
+	 ld       hl,lasers                  ;Test # of lasers
+	 ld       a,(hl)
+	 dec      a
+	 ret      m
+	 ld       (hl),a
+	 ld       a,(x)
+	 add      a,3
+
+	 ld       b,a                        ;Draw laser
+	 ld       c,63
+	 call     FIND_PIXEL            ;find this value!!!!
+	 ld       de,GRAPH_MEM
+	 add      hl,de
+	 ld       b,84
+	 ld       de,12
+ldrawlaser:
+	 ld       (hl),a
+	 add      hl,de
+	 djnz     ldrawlaser
+
+	 ld       a,(x)                      ;Laser kills enemies
+	 add      a,3
+	 ld       e,a
+	 ld       hl,enemies
+	 ld       b,20
+l_laser: ld       a,(hl)
+	 inc      hl
+	 inc      hl
+	 or       a
+	 jr       z,nohitl
+	 dec      a
+	 jr       z,nohitl
+	 cp       3
+	 jr       z,nohitl
+	 ld       a,e
+	 sub      (hl)
+	 and      248
+	 jr       nz,nohitl
+	 dec      hl
+	 ld       (hl),0
+	 dec      hl
+	 ld       (hl),4
+	 inc      hl
+	 inc      hl
+nohitl:  inc      hl
+	 inc      hl
+	 djnz     l_laser
+	 ret
+
+;**********Find_Pixel************
+;Thanx to Ahmed and Patrick Davidson for this routine
+
+FIND_PIXEL:                       
+  ld  a,b
+  and 7
+  ld  e,a
+  ld  d,0 
+  ld  hl,offsets_table
+  add hl,de 
+  ld  a,63
+  sub c ; A = 63 - X
+  ld  c,(hl)
+  ld  l,a
+  ld  h,0 ; HL = (63 - Y) 
+  ld  d,h 
+  ld  e,l ; DE = (63 - Y)
+  add hl,hl
+  add hl,de
+  add hl,hl
+  add hl,hl ; HL = 12 * (63 - Y)
+  ld  e,b ; DE = X
+  srl e
+  srl e
+  srl e                 ; DE = X/8
+  add hl,de
+  ld  a,c
+  ret
+
+;************** Allow You To Shoot
+;***************************************
+
+You_Shoot:
+	 ld       a,$BF
+	 out      (1),a
+	 ld       a,(your_status)
+	 or       a
+	 ret      nz
+	 ld       hl,jpf1
+	 in       a,(1)
+	 bit      5,a
+	 jr       z,pressed
+	 ld       (hl),0
+	 ret
+
+pressed: ld       a,(hl)
+	 or       a
+	 ret      nz
+	 ld       (hl),1
+
+	 ld       hl,ybullets
+	 ld       de,3
+	 ld       b,10
+find_ybullet:
+	 ld       a,(hl)
+	 or       a
+	 jr       z,found_ybullet
+	 add      hl,de
+	 djnz     find_ybullet
+	 ret
+
+found_ybullet:
+	 ld       (hl),1
+	 inc      hl
+	 ld       a,(x)
+	 add      a,2
+	 ld       (hl),a
+	 ld       a,(y)
+	 sub      4
+	 inc      hl
+	 ld       (hl),a
+	 ret
+
+ ; *************** Move Your Bullets****************************************
+
+kill_bullet:
+	 dec      hl
+	 dec      hl
+	 ld       (hl),0
+	 ret
+
+Move_Your_Bullets:
+	 ld       hl,ybullets
+	 ld       b,10
+scan_your_bullets:
+	 push     bc
+	 push     hl
+	 ld       (temp1),hl
+	 ld       a,(hl)
+	 inc      hl
+	 dec      a
+	 call     z,bullet_type_1
+	 pop      hl
+	 pop      bc
+	 ld       de,3
+	 add      hl,de
+	 djnz     scan_your_bullets
+	 ret
+
+bullet_type_1:
+
+	 ld       d,(hl)
+	 inc      hl
+	 ld       e,(hl)
+	 dec      e
+	 jr       z,kill_bullet
+	 dec      e
+	 jr       z,kill_bullet
+	 ld       (hl),e
+	 ld       ix,spr_bullet_1
+	 push     de
+	 call     drw_spr
+	 pop      de
+	 ld       b,20
+	 ld       hl,enemies
+
+hit_enemies:                                 ;Hits with normal enemies
+	 push     hl
+
+	 ld       a,(hl)
+	 or       a
+	 jr       z,nohit
+	 dec      a
+	 jr       z,nohit
+	 cp       3
+	 jr       z,nohit
+
+	 inc      hl
+	 inc      hl
+
+	 ld       a,(hl)
+	 sub      d
+	 add      a,5
+	 jp       m,nohit
+	 cp       8
+	 jr       nc,nohit
+
+	 inc      hl
+	 ld       a,(hl)
+	 sub      e
+	 add      a,5
+	 jp       m,nohit
+	 cp       10
+	 jr       nc,nohit
+
+	 push     hl
+	 ld       hl,(temp1)
+	 ld       (hl),0
+	 ld       hl,(score)
+	 ld       de,10
+	 add      hl,de
+	 ld       (score),hl
+	 pop      hl
+
+	 dec      hl
+	 dec      hl
+	 dec      (hl)
+	 jr       nz,nohit
+	 ld       (hl),0
+	 dec      hl
+	 ld       (hl),4
+
+	 pop      hl
+	 ret
+	 
+nohit:   pop      hl
+	 inc      hl
+	 inc      hl
+	 inc      hl
+	 inc      hl
+	 djnz     hit_enemies
+
+	 ld       hl,boss_status             ;Hits with boss
+	 ld       a,(hl)
+	 or       a
+	 ret      m
+	 ret      z
+	 inc      hl
+	 inc      hl
+	 ld       a,(hl)
+	 sub      d
+bhsmc1:  add      a,15
+	 ret      m
+bhsmc2:  cp       18
+	 ret      p
+
+	 inc      hl
+	 ld       a,(hl)
+	 sub      e
+	 add      a,8
+	 ret      m
+	 cp       13
+	 ret      p
+
+	 ld       hl,(temp1)
+	 ld       (hl),0
+
+	 ld       hl,(score)
+	 ld       de,25
+	 add      hl,de
+	 ld       (score),hl
+
+	 ld       hl,boss_pwr
+	 dec      (hl)
+	 ret      nz
+	 ld       (hl),0
+	 dec      hl
+	 ld       (hl),-1
+	 ret
+
+ ; *************** Display the Screen
+;***************************************
+
+Display_Screen:
+	 call DISP_DELAY
+	 ld       a,7
+	 out      (16),a
+
+	 ld       c,17
+	 ld       a,$80
+	 ld       hl,GRAPH_MEM+(16*12)
+loop_display:
+	 call DISP_DELAY
+	 out      (16),a
+	 inc      a
+	 ld       e,a
+	 ld       a,$20
+	 call DISP_DELAY
+	 out      (16),a
+	 ld       a,e
+	 call DISP_DELAY \ outi
+	 call DISP_DELAY \ outi
+	 call DISP_DELAY \ outi
+	 call DISP_DELAY \ outi
+	 call DISP_DELAY \ outi
+	 call DISP_DELAY \ outi
+	 call DISP_DELAY \ outi
+	 call DISP_DELAY \ outi
+	 call DISP_DELAY \ outi
+	 call DISP_DELAY \ outi
+	 call DISP_DELAY \ outi
+	 call DISP_DELAY \ outi
+	 cp $c0
+	 jr nz,loop_display
+	 ret
+
+DISP_DELAY:
+ push hl
+ pop hl
+ push hl
+ pop hl
+ ret
+
+lasersdisplay:
+	set 7,(iy+$14)
+      ld a,(lasers)
+      add a,'0'
+	ld hl,$0f00
+      LD (pencol),HL
+      bcall(_vputmap)
+      res 7,(iy+$14)
+ 	ret
+
+; *************** Handle Your Ship
+;*****************************************
+
+Your_Ship:
+	 ld       a,(your_status)
+	 bit      4,a
+	 jr       nz,you_not_normal
+	 or       a
+	 jr       z,ok
+	 dec      a
+	 ld       (your_status),a
+	 ld       hl,(lives)
+	 ld       a,l
+	 or       h
+	 jr       nz,ok
+	 pop      af
+	 ret
+ok:
+	 ld       a,%01111110
+	 out      (1),a
+	 ld       hl,y
+	 in       a,(1)
+	 rra
+	 ld       b,a
+
+	 jr       c,no_down
+	 ld       a,(hl)
+	 inc      a
+	 cp       73
+	 jr       z,no_down
+	 ld       (hl),a
+no_down: dec      hl
+	 rr       b
+	 jr       c,no_left
+	 ld       a,(hl)
+	 dec      a
+	 jr       z,no_left
+	 ld       (hl),a
+no_left: rr       b
+	 jr       c,no_right
+	 ld       a,(hl)
+	 inc      a
+	 cp       89
+	 jr       z,no_right
+	 ld       (hl),a
+no_right:ld       d,(hl)
+	 inc      hl
+	 rr       b
+	 jr       c,no_up
+	 ld       a,(hl)
+	 dec      a
+	 cp       60
+	 jr       z,no_up
+	 ld       (hl),a
+no_up:
+	 ld       ix,spr_your_ship
+
+display_common:
+	 ld       e,(hl)
+	 jp       drw_spr
+
+you_not_normal:
+	 ld       de,-16
+	 call     sub_score
+	 ld       a,(your_status)
+	 dec      a
+	 ld       (your_status),a
+	 inc      a
+	 and      14
+	 xor      14
+	 ld       hl,x-1
+
+explosion_stuff:
+	 rra
+	 add      a,a
+	 add      a,a
+	 add      a,a
+	 ld       c,a
+	 ld       b,0
+	 ld       ix,spr_explosion
+	 add      ix,bc
+	 inc      hl
+	 ld       d,(hl)
+	 inc      hl
+	 jr       display_common
+
+ ; *************** Control Key Processing
+;***********************************
+
+Misc_Keys:
+	 bcall(_getK)
+
+	 cp       $37
+	 jr       z,pause
+
+	 cp       $38 
+	 jr       z,e_save
+
+	 cp       $0F
+	 jp       z,exit_game
+
+	 ret
+
+e_save:
+	 ld       de,saved_flag
+	 ld       (de),a
+	 inc      de
+	 ld       hl,APD_BUF
+	 ld       bc,storage_length
+	 ldir
+	 jp       exit_game
+
+
+pause:   bcall(_clrlcdf)
+	 LD       de,0
+	 ld       hl,paused_msg
+	 call   putstr
+
+	 ld       hl,$b05
+	 ld       (CURROW),hl
+	 ld       hl,(lives)
+	 bcall(_disphl)
+
+	 ld       hl,$b06
+	 ld       (CURROW),hl
+	 ld       hl,(level)
+	 bcall(_disphl)
+
+	 ld       hl,$b07
+	 ld       (CURROW),hl
+	 ld       hl,(score)
+	 bcall(_disphl)
+OTH_PAUSE
+ bcall(_getK)
+ cp 9
+ jr nz,OTH_PAUSE
+ ret
+
+paused_msg:
+	 .db      " Galaxian v1.00 "
+	 .db      "---> PAUSED <---"
+	 .db      "                "
+	 .db      "<ENTER>: Resume "
+	 .db      "                "
+	 .db      "LIVES --->      "
+	 .db      "LEVEL --->      "
+	 .db      "SCORE --->",0
+; *************** Sprite Rendering Routine
+;*********************************
+
+offsets_table:
+	 .db      128,64,32,16,8,4,2,1
+
+drw_spr: ld       a,d
+	 and      7
+	 ld       hl,offsets_table
+	 ld       c,a
+	 ld       b,0
+	 add      hl,bc
+	 ld       a,(hl)
+	 ld       (_smc1+1),a
+
+	 ld       hl,GRAPH_MEM
+
+	 ld       a,e
+	 add      a,a
+	 add      a,e
+	 add      a,a
+	 rl       b
+	 add      a,a
+	 rl       b
+	 srl      d
+	 srl      d
+	 srl      d
+	 add      a,d
+	 jr       nc,_n1
+	 inc      b
+_n1:     ld       c,a
+	 add      hl,bc
+	  
+	 ld       d,(ix)
+	 ld       b,(ix+1)
+_oloop:  push     bc                         ;Save # of rows
+	 push     hl                         ;Save screen address
+	 ld       b,d                        ;Load width
+	 ld       c,(ix+2)                   ;Load one line of image
+	 inc      ix
+_smc1    ld       a,1                        ;Load pixel mask
+_iloop:  sla      c                          ;Test leftmost pixel
+	 jr       nc,_noplot                 ;See if a plot is needed
+	 ld       e,a                        ;OR pixel with screen
+	 or       (hl)
+	 ld       (hl),a
+	 ld       a,e
+_noplot: rrca
+	 jr       nc,_notedge                ;Test if edge of byte reached
+	 inc      hl                         ;Go to next byte
+_notedge:djnz     _iloop
+	 pop      hl                         ;Restore address
+	 ld       bc,12                      ;Go to next line
+	 add      hl,bc
+	 pop      bc                         ;Restore data
+	 djnz     _oloop
+	 ret
+
+drw_sprw:
+	 ld       a,d
+	 and      7
+	 ld       hl,offsets_table
+	 ld       c,a
+	 ld       b,0
+	 add      hl,bc
+	 ld       a,(hl)
+	 ld       (wsmc1+1),a
+	 ld       (wsmc2+1),a
+
+	 ld       hl,GRAPH_MEM
+
+	 ld       a,e
+	 add      a,a
+	 add      a,e
+	 add      a,a
+	 rl       b
+	 add      a,a
+	 rl       b
+	 srl      d
+	 srl      d
+	 srl      d
+	 add      a,d
+	 jr       nc,n1
+	 inc      b
+n1:      ld       c,a
+	 add      hl,bc
+	  
+	 ld       d,(ix)
+	 ld       b,(ix+1)
+woloop:  push     bc                         ;Save # of rows
+	 push     hl                         ;Save screen address
+	 ld       b,d                        ;Load width
+	 ld       c,(ix+2)                   ;Load one line of image
+	 inc      ix
+wsmc1    ld       a,1                        ;Load pixel mask
+wiloop:  sla      c                          ;Test leftmost pixel
+	 jr       nc,wnoplot                 ;See if a plot is needed
+	 ld       e,a                        ;OR pixel with screen
+	 or       (hl)
+	 ld       (hl),a
+	 ld       a,e
+wnoplot: rrca
+	 jr       nc,wnotedge                ;Test if edge of byte
+reached
+	 inc      hl                         ;Go to next byte
+wnotedge
+wsmc2:   cp       1
+	 jr       z,wover_1
+
+	 djnz     wiloop
+	 pop      hl                         ;Restore address
+	 ld       bc,12                      ;Go to next line
+	 add      hl,bc
+	 pop      bc                         ;Restore data
+	 djnz     woloop
+	 ret
+wover_1: ld       c,(ix+2)
+	 inc      ix
+	 djnz     wiloop
+	 dec      ix
+	 pop      hl
+	 ld       bc,12
+	 add      hl,bc
+	 pop      bc
+	 djnz     woloop
+	 ret
+
+ ; *************** Enter Next Level*****************************************
+Next_Level:
+	 LD       HL,enemies
+	 ld       bc,80
+     
+	 xor      a
+	 ld       (timer),a
+	 ld       hl,(score)
+	 ld       de,200
+	 add      hl,de
+	 ld       (score),hl
+	 ld       hl,level
+	 inc      (hl)
+	 ld       a,(hl)
+
+	 cp       21
+	 jp       z,won
+
+	 call     Load_Level_Data
+
+	 jp       (hl)
+
+
+ ; *************** Give Victory Bonus
+;***************************************
+
+won:     pop      af
+	 ld       hl,(score)
+	 ld       de,5000
+	 add      hl,de
+	 ld       (score),hl
+	 ret
+
+ ; *************** Load a Level Data Bank
+;***********************************
+
+Load_Level_Data:
+	 ld       hl,(level)
+	 add      hl,hl
+	 ld       bc,levels_jump_table-2
+	 add      hl,bc
+	 call LD_HL_MHL
+	 ld       e,1
+	 jp       (hl)
+
+ ; **************** Level Data Loaders
+;**********************************************
+
+levels_jump_table:
+	 .dw      level1                     ;20xEnemy 1
+	 .dw      level2                     ;20xEnemy 1 
+	 .dw      level3                     ;20xEnemy 1 & Boss 1
+	 .dw      level4                     ;13xEnemy 1 & 7xEnemy 2
+	 .dw      level5                     ;10xCross       
+	 .dw      level6                     ;20xEnemy 2
+	 .dw      level7                     ;20xEnemy 2 & Boss 2
+	 .dw      level8                     ;13xEnemy 1 & 7xEnemy 3
+	 .dw      level9                     ;10xCross
+	 .dw      level10                    ;20xEnemy 3
+	 .dw      level11                    ;20xEnemy 3 & Boss 2
+	 .dw      level12                    ;13xEnemy 1 & 7xEnemy 4
+	 .dw      level13                    ;10xCross
+	 .dw      level14                    ;20xEnemy 4
+	 .dw      level17                    ;10xO enemies
+	 .dw      level15                    ;20xEnemy 4 & Boss 2
+	 .dw      level17                    ;10xO enemies
+	 .dw      level16                    ;Super-Boss & 8xEnemy 1
+	 .dw      level17                    ;10xO enemies
+	 .dw      level18                    ;Super-Boss & 8xEnemy 2
+
+load_coordinates:
+	 ld       (enemy_image),bc
+	 ld       (boss_image),de
+	 LD       (enemy_pwr),a
+	 ld       de,enemy_coords
+	 ld       bc,40
+	 ldir
+	 ret
+
+level1:                                      ;Levels with one type of enemy
+	 ld       hl,Level1Pattern
+level1_: ld       a,1
+	 ld       bc,spr_enemy_1
+level1__:
+	 call     load_coordinates
+	 ld       hl,setup_standard
+	 ret
+
+level2:
+	 ld       hl,Level2Pattern
+	 jr       level1_
+
+level6:
+	 ld       hl,Level6Pattern
+	 ld       a,2
+	 ld       bc,spr_enemy_2
+	 jr       level1__
+
+level10: ld       a,3
+	 ld       bc,spr_enemy_3
+level10_:
+	 ld       hl,Level10Pattern
+	 jr       level1__
+
+level14: ld       a,4
+	 ld       bc,spr_enemy_4
+	 jr       level10_
+
+level3:                                      ;Levels with bosses
+	 ld       hl,Level3Pattern
+	 ld       a,1
+	 ld       bc,spr_enemy_1
+	 ld       de,spr_boss_1
+level3_:
+	 call     load_coordinates
+	 ld       hl,setup_boss
+	 ret
+
+level7:
+	 ld       hl,Level7Pattern
+	 ld       a,2
+	 ld       bc,spr_enemy_2
+level7_:
+	 ld       de,spr_boss_2
+	 jr       level3_
+
+level11: ld       a,3
+	 ld       bc,spr_enemy_3
+level11_:
+	 ld       hl,Level11Pattern
+	 jr       level7_
+
+level15: ld       a,4
+	 ld       bc,spr_enemy_4
+	 jr       level11_
+
+level4:                                      ;Levels with two enemy types
+	 ld       hl,Level4Pattern
+	 ld       a,2
+	 ld       bc,spr_enemy_2
+level4_:
+	 ld       e,-1
+	 call     load_coordinates
+	 ld       hl,setup_weak
+	 ret
+
+level8:  ld       a,3
+	 ld       bc,spr_enemy_3
+level8_:
+	 ld       hl,Level8Pattern
+	 jr       level4_
+
+level12: ld       a,4
+	 ld       bc,spr_enemy_4
+	 jr       level8_
+
+level5:                                      ;Levels with cross enemies
+level9:
+level13:
+	 ld       a,5
+	 ld       (enemy_pwr),a
+	 ld       hl,enemy_warped
+	 ld       (enemy_image),hl
+	 ld       (boss_image),hl
+	 ld       hl,setup_cross
+	 ret
+
+level17:
+	 ld       a,8
+	 ld       (enemy_pwr),a
+	 ld       hl,enemy_o
+	 ld       (enemy_image),hl
+	 ld       (boss_image),hl
+	 ld       hl,setup_o
+	 ret
+
+level16: ld       a,1
+	 ld       bc,spr_enemy_1
+level16_:
+	 ld       hl,Level1Pattern
+	 ld       de,spr_boss_3
+	 call     load_coordinates
+	 ld       hl,setup_super
+	 ret
+
+level18: ld       a,4
+	 ld       bc,spr_enemy_4
+	 jr       level16_
+; *************** Level Set-Up Routines ************************************
+
+setup_standard:
+	 ld       a,20
+setup_common:
+	 ld       b,20
+put8:    ld       hl,enemies_remaining
+	 ld       (hl),a
+	 ld       hl,enemies
+	 ld       c,1
+	 ld       a,(enemy_pwr)
+	 ld       d,110
+lle:     ld       (hl),c
+	 inc      hl
+	 ld       (hl),a
+	 inc      hl
+	 ld       (hl),d
+	 inc      hl
+	 ld       (hl),d
+	 inc      hl
+	 djnz    lle
+	 ret
+
+setup_boss:
+	 ld       hl,bhsmc1+1
+	 ld       (hl),15
+	 ld       hl,bhsmc2+1
+	 ld       (hl),18
+	 ld       hl,boss_status
+	 ld       (hl),1
+	 inc      hl
+	 ld       (hl),10
+	 inc      hl
+	 ld       (HL),30
+	 INC      HL
+	 LD       (HL),0
+	 ld       a,21
+	 jr       setup_common
+
+setup_weak:
+	 call     setup_standard
+	 ld       hl,enemies+1
+	 ld       b,13
+weak:    ld       (hl),1
+	 inc      hl
+	 inc      hl
+	 inc      hl
+	 inc      hl
+	 djnz     weak
+	 ret
+
+setup_o:
+setup_cross:
+	 ld       a,10
+	 ld       (enemies_remaining),a
+	 ld       b,a
+	 ld       hl,enemies
+generate_warp_enemies:
+	 ld       (hl),13
+	 inc      hl
+	 ld       a,(enemy_pwr)
+	 ld       (hl),a
+	 inc      hl
+	 ld       a,r
+	 and      63
+	 add      a,10
+	 ld       (hl),a
+	 inc      hl
+	 xor      a
+	 ld       (hl),a
+	 inc      hl
+	 ld       (hl),a
+	 inc      hl
+	 inc      a
+	 ld       (hl),a
+	 inc      hl
+	 ld       (hl),a
+	 inc      hl
+	 inc      hl
+	 djnz     generate_warp_enemies
+	 ret
+
+setup_super:
+	 ld       b,8
+	 ld       a,9
+	 call     put8
+	 ld       hl,bhsmc1+1
+	 ld       (hl),31
+	 ld       hl,bhsmc2+1
+	 ld       (hl),34
+	 ld       hl,boss_status
+	 ld       (hl),5
+	 inc      hl
+	 ld       (hl),98
+	 inc      hl
+	 ld       (HL),2
+	 INC      HL
+	 LD       (HL),0
+	 ret
+putstr_v:
+	ld (PENCOL),de
+	bcall(_vputs)
+      ret
+putstr:
+	ld (CURROW),de
+	bcall(_puts)
+      ret
+
+ ; *************** Level Data ***********************************************
+
+Level1Pattern:
+	 .db      10,16,20,16,30,16,40,16,50,16
+	 .db      5,24,15,24,25,24,35,24,45,24
+	 .db      50,32,10,32,20,32,30,32,40,32
+	 .db      5,40,15,40,25,40,35,40,45,40
+
+Level2Pattern:
+	 .db      1,16,14,16,27,16,40,16,53,16
+	 .db      1,24,14,24,27,24,40,24,53,24
+	 .db      1,32,14,32,27,32,40,32,53,32
+	 .db      1,40,14,40,27,40,40,40,53,40
+
+Level3Pattern:
+	 .db      1,26,14,26,27,26,40,26,53,26
+	 .db      1,34,14,34,27,34,40,34,53,34
+	 .db      1,42,14,42,27,42,40,42,53,42
+	 .db      1,50,14,50,27,50,40,50,53,50
+
+Level4Pattern:
+	 .db      5,18,13,18,21,18,29,18,37,18,45,18,53,18
+	 .db      9,28,17,28,25,28,33,28,41,28,49,28
+	 .db      5,38,13,38,21,38,29,38,37,38,45,38,53,38
+
+Level6Pattern:
+	 .db      53,28
+	 .db      52,32
+	 .db      48,35
+	 .db      42,38
+	 .db      35,39
+	 .db      27,40
+	 .DB      19,39
+	 .DB      12,38
+	 .DB      6,35
+	 .db      2,32
+	 .db      1,28
+	 .db      2,24
+	 .DB      6,21
+	 .DB      12,18
+	 .DB      19,17
+	 .DB      27,16
+	 .DB      35,17
+	 .DB      42,18
+	 .DB      48,21
+	 .db      52,24
+
+Level7Pattern:
+	 .db      1,26,14,26,27,26,40,26,53,26
+	 .db      1,34,14,34,27,34,40,34,53,34
+	 .db      1,42,14,42,27,42,40,42,53,42
+	 .db      1,50,14,50,27,50,40,50,53,50
+
+Level8Pattern:
+	 .db      5,18,13,18,21,18,29,18,37,18,45,18,53,18
+	 .db      9,28,17,28,25,28,33,28,41,28,49,28
+	 .db      5,38,13,38,21,38,29,38,37,38,45,38,53,38
+
+Level10Pattern:
+	 .DB      01,16,01,22,01,28,01,34,01,40
+	 .DB      19,16,19,22,19,28,19,34,19,40
+	 .db      37,16,37,22,37,28,37,34,37,40
+	 .db      55,16,55,22,55,28,55,34,55,40
+
+Level11Pattern:
+	 .db      1,26,14,26,27,26,40,26,53,26
+	 .db      1,34,14,34,27,34,40,34,53,34
+	 .db      1,42,14,42,27,42,40,42,53,42
+	 .db      1,50,14,50,27,50,40,50,53,50
+
+
+ ; *************** Sprites
+;**************************************************
+
+spr_your_ship:
+	 .db      7,7
+	 .DB      %00010000
+	 .DB      %00111000
+	 .DB      %10111010
+	 .DB      %10111010
+	 .DB      %10111010
+	 .DB      %11111110
+	 .DB      %11111110
+
+enemy_warped:
+	 .db      7,7
+	 .db      %11000110
+	 .db      %11101110
+	 .db      %01111100
+	 .db      %00111000
+	 .db      %01111100
+	 .db      %11101110
+	 .db      %11000110
+
+spr_bullet_1:
+	 .db      3,5
+	 .db      %01000000
+	 .db      %11100000
+	 .db      %11100000
+	 .db      %11100000
+	 .DB      %11100000
+
+spr_enemy_1:
+	 .db      6,6
+	 .db      %10000100
+	 .db      %10000100
+	 .db      %11111100
+	 .DB      %11111100
+	 .DB      %01111000
+	 .DB      %00110000
+
+spr_enemy_2:
+	 .db      6,7
+	 .db      %10000100
+	 .db      %11001100
+	 .db      %11111100
+	 .db      %10000100
+	 .db      %10000100
+	 .db      %01001000
+	 .db      %00110000
+
+spr_enemy_3:
+	 .db      6,5
+	 .db      %10000100
+	 .db      %11111100
+	 .DB      %10000100
+	 .DB      %01001000
+	 .db      %00110000
+
+spr_enemy_4:
+	 .db      7,5
+	 .db      %10000010
+	 .db      %11000110
+	 .db      %10101010
+	 .db      %10010010
+	 .db      %10000010
+
+enemy_o: .db       7,7
+	 .db      %01111100
+	 .db      %11111110
+	 .db      %11000110
+	 .db      %11000110
+	 .db      %11000110
+	 .db      %11111110
+	 .db      %01111100
+spr_boss_1:
+	 .db      16,8
+	 .db      %10000000,%00000001
+	 .db      %11000000,%00000011
+	 .db      %10111111,%11111101
+	 .db      %10000001,%10000001
+	 .db      %10000001,%10000001
+	 .db      %01000001,%10000010
+	 .db      %00100001,%10000100
+	 .db      %00011111,%11111000
+
+spr_boss_2:
+	 .db      16,8
+	 .db      %11111111,%11111111
+	 .db      %11100000,%00000111
+	 .db      %11100000,%00000111
+	 .db      %11100000,%00000111
+	 .db      %11100000,%00000111
+	 .db      %11110000,%00001111
+	 .db      %11101000,%00010111
+	 .db      %01000111,%11100010
+
+spr_boss_3:
+	 .db      31,8
+	 .db      %11111111,%11111111,%11111111,%11111110
+	 .db      %10101000,%00000000,%00000000,%00101010
+	 .db      %10101001,%01010101,%01010101,%00101010
+	 .db      %10101000,%00000000,%00000000,%00101010
+	 .db      %10101000,%00000111,%11000000,%00101010
+	 .db      %10001111,%11000010,%10000111,%11100010
+	 .db      %01010000,%00100001,%00001000,%00010100
+	 .db      %00100000,%00011111,%11110000,%00001000
+
+spr_enemy_bullet:
+	 .db      3,3
+	 .db      %01000000
+	 .db      %11100000
+	 .db      %01000000
+
+spr_explosion:
+	 .db      8,6
+	 .db      %00000000
+	 .db      %00011100
+	 .DB      %00111110
+	 .DB      %01010110
+	 .DB      %00111000
+	 .DB      %00000000
+	 .db      8,6
+	 .db      %00110000
+	 .db      %01001110
+	 .DB      %10111110
+	 .DB      %01001111
+	 .DB      %00111000
+	 .DB      %00011010
+	 .db      8,6
+	 .db      %11110011
+	 .db      %01001110
+	 .DB      %10110101
+	 .DB      %01000101
+	 .DB      %00111110
+	 .DB      %11011010
+	 .db      8,6
+	 .db      %11110011
+	 .db      %01001110
+	 .DB      %10110101
+	 .DB      %01000101
+	 .DB      %00111110
+	 .DB      %11011010
+	 .db      8,6
+	 .db      %01000001
+	 .db      %00100110
+	 .DB      %00010101
+	 .DB      %01000100
+	 .DB      %00010010
+	 .DB      %10011010
+	 .db      8,6
+	 .db      %01000010
+	 .db      %00100000
+	 .DB      %00000001
+	 .DB      %01000100
+	 .DB      %00100010
+	 .DB      %10001010
+	 .db      8,6
+	 .db      %00001000
+	 .db      %11000010
+	 .DB      %00000000
+	 .db      %00100000
+	 .db      %00000001
+	 .db      %00110000
+	 .db      8,6
+	 .db      %00000100
+	 .DB      %00000000
+	 .DB      %01000000
+	 .DB      %00000000
+	 .db      %00000001
+	 .db      %00100100
+
+ ; **************** Title Screen Text
+;***************************************
+initial_pic:
+	 .db %00000011,%11100000,%11111111,%00111100,%00000011,%11111100,%11100000,%11101111,%11111100,%11111111,%00111100,%01110000
+	 .db %00001100,%00011001,%00000000,%10100100,%00000100,%00000010,%10100000,%10101000,%00000101,%00000000,%10100010,%01010000
+	 .db %00001000,%01000101,%00111100,%10100100,%00000100,%11110010,%01010001,%01001111,%00111101,%00111100,%10100010,%01010000
+	 .db %00001000,%10100101,%00100100,%10100100,%00000100,%10010010,%01010001,%01000001,%00100001,%00100100,%10100010,%01010000
+	 .db %00001001,%00010101,%00100100,%10100100,%00000100,%10010010,%01010001,%01000001,%00100001,%00100100,%10100011,%01010000
+	 .db %00001001,%00011101,%00111100,%10100100,%00000100,%11110010,%01010001,%01000001,%00100001,%00111100,%10100011,%01010000
+	 .db %00001001,%00000001,%00000000,%10100100,%00000100,%00000010,%00101010,%10000001,%00100001,%00000000,%10100001,%10010000
+	 .db %00001001,%01111101,%00111100,%10100100,%00000100,%11110010,%00010101,%00000001,%00100001,%00111100,%10100000,%00010000
+	 .db %00001001,%01000101,%00100100,%10100100,%00000100,%10010010,%00101010,%10000001,%00100001,%00100100,%10100010,%00010000
+	 .db %00001001,%01100101,%00100100,%10100100,%00000100,%10010010,%01010010,%10000001,%00100001,%00100100,%10100111,%00010000
+	 .db %00001001,%00100101,%00100100,%10100100,%00000100,%10010010,%01010001,%01000001,%00100001,%00100100,%10100100,%10010000
+	 .db %00001001,%00100101,%00100100,%10100100,%00000100,%10010010,%01010001,%01000001,%00100001,%00100100,%10100100,%10010000
+	 .db %00001001,%00100101,%00100100,%10100111,%11110100,%10010010,%01010001,%01000001,%00100001,%00100100,%10100100,%10010000
+	 .db %00001001,%11000101,%00100100,%10100000,%00010100,%10010010,%10100000,%10101111,%00111101,%00100100,%10100100,%10010000
+	 .db %00000100,%00111101,%00100100,%10100000,%00010100,%10010010,%10100000,%10101000,%00000101,%00100100,%10100100,%01010000
+	 .db %00000011,%11100101,%11100111,%10111111,%11110111,%10011110,%11100000,%11101111,%11111101,%11100111,%10111100,%01110000
+
+initial_pic2:
+	 .db %00000011,%11100000,%11111111,%00111100,%00000011,%11111100,%11100000,%11101111,%11111100,%11111111,%00111100,%01110000
+	 .db %00001111,%11111001,%11111111,%10111100,%00000111,%11111110,%11100000,%11101111,%11111101,%11111111,%10111110,%01110000
+	 .db %00001111,%11111101,%11111111,%10111100,%00000111,%11111110,%01110001,%11001111,%11111101,%11111111,%10111110,%01110000
+	 .db %00001111,%10111101,%11100111,%10111100,%00000111,%10011110,%01110001,%11000001,%11100001,%11100111,%10111110,%01110000
+	 .db %00001111,%00011101,%11100111,%10111100,%00000111,%10011110,%01110001,%11000001,%11100001,%11100111,%10111111,%01110000
+	 .db %00001111,%00011101,%11111111,%10111100,%00000111,%11111110,%01110001,%11000001,%11100001,%11111111,%10111111,%01110000
+	 .db %00001111,%00000001,%11111111,%10111100,%00000111,%11111110,%00111111,%10000001,%11100001,%11111111,%10111111,%11110000
+	 .db %00001111,%01111101,%11111111,%10111100,%00000111,%11111110,%00011111,%00000001,%11100001,%11111111,%10111111,%11110000
+	 .db %00001111,%01111101,%11100111,%10111100,%00000111,%10011110,%00111111,%10000001,%11100001,%11100111,%10111111,%11110000
+	 .db %00001111,%01111101,%11100111,%10111100,%00000111,%10011110,%01110011,%10000001,%11100001,%11100111,%10111111,%11110000
+	 .db %00001111,%00111101,%11100111,%10111100,%00000111,%10011110,%01110001,%11000001,%11100001,%11100111,%10111100,%11110000
+	 .db %00001111,%00111101,%11100111,%10111100,%00000111,%10011110,%01110001,%11000001,%11100001,%11100111,%10111100,%11110000
+	 .db %00001111,%00111101,%11100111,%10111111,%11110111,%10011110,%01110001,%11000001,%11100001,%11100111,%10111100,%11110000
+	 .db %00001111,%11111101,%11100111,%10111111,%11110111,%10011110,%11100000,%11101111,%11111101,%11100111,%10111100,%11110000
+	 .db %00000111,%11111101,%11100111,%10111111,%11110111,%10011110,%11100000,%11101111,%11111101,%11100111,%10111100,%01110000
+	 .db %00000011,%11100101,%11100111,%10111111,%11110111,%10011110,%11100000,%11101111,%11111101,%11100111,%10111100,%01110000
+enemy_pics:
+	   .db %00001000,%01010000,%10100001,%00110001,%10001000,%00000000,%00010100,%00001011,%00011000,%10000101,%00001010,%00010000
+	 .db %00001000,%01011001,%10111111,%00111011,%10001100,%00000000,%00110110,%00011011,%10111000,%11111101,%10011010,%00010000
+	 .db %00001111,%11011111,%10100001,%00011111,%00001011,%11111111,%11010101,%00101001,%11110000,%10000101,%11111011,%11110000
+	 .db %00001111,%11010000,%10010010,%00001110,%00001000,%00011000,%00010100,%11001000,%11100000,%01001001,%00001011,%11110000
+	 .db %00000111,%10010000,%10001100,%00011111,%00001000,%00011000,%00010100,%00001001,%11110000,%00110001,%00001001,%11100000
+	 .db %00000011,%00001001,%00000000,%00111011,%10000100,%00011000,%00100100,%00001011,%10111000,%00000000,%10010000,%11000000
+	 .db %00000000,%00000110,%00000000,%00110001,%10000010,%00011000,%01000100,%00001011,%00011000,%00000000,%01100000,%00000000
+	 .db %00000000,%00000000,%00000000,%00000000,%00000001,%11111111,%10000000,%00000000,%00000000,%00000000,%00000000,%00000000
+
+
+copyright:
+	.db "Version 1.0 Copyright 99 by:",0
+patsam:
+	.db "Patrick Davidson/Sam Heald",0
+control1:
+	.db "ENTER: Play the Game!",0
+
+ ; **************** Saved Game Data
+;*****************************************
+
+saved_flag:
+	 .db      0
+save_data:
+	 .db      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+	 .db      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+	 .db      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+	 .db      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+	 .db      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+	 .db      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+	 .db      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+	 .db      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+	 .db      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+	 .db      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+
+ ; **************** High-Score Data
+;*****************************************
+
+hi_score_str:
+	 .db      "--> GALAXIAN <--"
+	 .db      "   You got a    "
+	 .db      "  high score!   "
+	 .db      "Enter your name:",0
+hstitle:
+       .db      "== HIGHSCORES ==",0
+hsdata:  .dw      40000
+	 .db      "Galaxian!  ",0
+	 .dw      30000
+	 .db      "Galaxian!  ",0
+	 .dw      20000
+	 .db      "Galaxian!  ",0
+	 .dw      10000
+	 .db      "Galaxian!  ",0
+	 .dw      7500
+	 .db      "Galaxian!  ",0
+	 .dw      5000
+	 .db      "Galaxian!  ",0
+lowest   .dw      2500
+	 .db      "Galaxian!  ",0
+chartable:
+         .db      ":WRMH."
+         .DB      "..0VQLG!..ZUPKFC"
+         .DB      "..YTOJEBX.>SNIDA"
+         .DB      ".12345.."
+
+LD_HL_MHL:
+ ld e,(hl)
+ inc hl
+ ld d,(hl)
+ push de
+ pop hl
+ ret
+
+.end
+END

@@ -1,0 +1,1104 @@
+;---------------------------
+;|FrAwG GutS 83 1.0
+;|By Derrick Ward
+;---------------------------------------------------------------------------------------------------
+	.nolist		
+	#include "ion.inc"
+	#include "keys.inc"
+	.list		
+#ifdef TI83P		
+	.org progstart-2
+	.db $BB,$6D
+
+APD_BUF   = $86EC
+
+#else		
+	.org progstart
+
+APD_BUF   = $8265
+
+#endif		
+		xor a	
+		jr nc,StartG
+progdesc:	.db "FrAWgGuts v1.1",0
+
+
+#DEFINE  score    APD_BUF
+#DEFINE  lives    APD_BUF + 2
+#DEFINE  coordx   APD_BUF + 3   ; position of frog
+#DEFINE  coordy   APD_BUF + 4   ; position of frog
+#DEFINE  y        APD_BUF + 5   ; enemy coord
+#DEFINE  x1       APD_BUF + 6   ; info for all enemies
+#DEFINE  frogbank APD_BUF + 34  ; holds data for frogs that made it and blank spaces
+#DEFINE  enumber  APD_BUF + 49  ; memory address of enemy's coordx
+#DEFINE  temp     APD_BUF + 51
+#DEFINE  x        APD_BUF + 53  ;general purpose x coord for collisions etc.
+#DEFINE  temp2    APD_BUF + 54  ;used to tell if frog is on back so only frog is updated.
+#DEFINE  level    APD_BUF + 55   
+#DEFINE  timer2   APD_BUF + 57  ; the timer
+#DEFINE  froggs   APD_BUF + 59  ; keeps track of how many frogs have made it
+
+#DEFINE  string   APD_BUF + 60  ; I don't use this, since it is needed only on the 82
+			      ; to display numbers, but defining a var doesn't take mem, so 
+			      ; I am leaving it to make it easier to port..
+
+#DEFINE  leveladd APD_BUF + 66  ; memory address of current level
+#DEFINE  delval   APD_BUF + 68  ; delay --decreases every level
+#DEFINE  bonus    APD_BUF + 69
+#DEFINE  extlifep APD_BUF + 71
+#DEFINE  fimage   APD_BUF + 73  ; which sprite of frog to use
+
+
+StartG:                
+	ld hl,APD_BUF
+	ld (hl),0
+ 	ld de,APD_BUF+1
+ 	ld bc,767
+	ldir       
+	   bcall(_clrLCDF)	 
+	   call Dgraphic             ; draws background
+	   bcall(_copygbuf)
+	   set 	3,(iy+$05)    ; reverse char
+  	   ld   hl,$1514    
+           ld   (pencol),hl  
+	   ld    hl,Text3
+	   bcall(_vputs)        
+	   res   3, (iy+$05)  ; normal text
+	   ld    hl,$1C16    
+           ld    (pencol),hl  ; address to position small font
+	   ld     hl,Text2
+	   bcall(_vputs)        
+	   set 	3,(iy+$05)    ; reverse char
+	   ld   hl,$391C    
+           ld   (pencol),hl  ; address to position small font
+	   ld    hl,Text4    
+	   bcall(_vputs)
+	   call WaitKey
+	   ld a,6
+	   ld (froggs),a       ;this is a bunch of initialization
+	   ld hl,$0000	 
+	   ld (score),hl       ; set score to 16 bit 0
+	   inc hl
+	   ld (level),hl
+	   ld hl,level1 + 1
+	   ld (leveladd),hl
+	   call levelinit
+	   ld a,(level1)
+	   ld (timer2),a
+	   or a
+	   ld (delval),a		
+	   ld a,1
+	   ld (extlifep),a
+	   ld a,5
+	   ld (lives),a
+movesprite:
+	   ld hl,(leveladd)    ;loads the address of the level data
+	   dec hl
+	   ld a,(hl)
+	   ld (timer2),a
+	   xor a
+	   ld (temp),a 
+	   ld hl,Froggie
+	   ld (fimage),hl
+	   ld a,32
+           ld (coordx),a       ;frog's coord into mem
+	   ld a,56
+	   ld (coordy),a
+	   call update_frog
+	   jr mainloop2
+          
+mainloop:
+   	   jp timer	
+timereturn:
+	   call enemies
+enemret:                  ; label to return to when enemies done
+	   ld a,(temp)
+           cp 1
+	   jr z,dead
+	   ld a,(coordy)
+	   cp 35
+	   jr nc,mainloop2
+	   jr reallydead
+mainloop2:
+	 bcall(_getk)
+	 bcall(_op2toop1)
+	 bcall(_convop1)
+	 ld a,e
+	 cp 25
+	 jr z,fup
+	 cp 34
+	 jr z,fdown
+	 cp 24
+	 jp z,fleft
+   	 cp 26
+	 jp z,fright
+ 	 cp 105
+	 jp z,pause
+	 cp 22
+	 jp z,finish
+         cp 83
+	 jp z,beatlevel
+	 jr mainloop
+
+dead: 	
+	xor a
+	ld (temp),a
+	ld a,(coordy)
+        cp 35              ; if you're on a turtle or log's back
+	jp c,mainloop2
+
+reallydead:
+	ld d,20    ; - changed by Flo
+splatloop:
+	ld hl,splat
+	ld (fimage),hl
+	ld a,(coordy)
+	cp 13
+	call c,decrease_x	
+	ld e,a
+	ld a,(coordx)
+			
+	push de
+	call enemies         ;this loop displays you dead for a sec
+	pop de	         ;splattered that is
+	dec d
+	jr nz,splatloop
+
+	ld a,(lives)
+	dec a              ;you lose a life and game over is checked for
+	ld (lives),a
+	or a
+	jp z,finish
+	jp movesprite
+decrease_x:
+	add a,9
+	ld (coordy),a
+	ret
+fdown:
+	ld a,(coordy)
+	add a,7
+	cp 63
+	jp z,mainloop
+	ld (coordy),a	
+	ld hl,Frogdown
+	ld (fimage),hl           ;which image to use for frog
+	jp mainloop
+
+fup:
+	ld hl,Froggie
+	ld (fimage),hl
+			    ; sets frog image to up
+	ld a,(coordy)
+	add a,-7
+	ld (coordy),a	
+        ld a,(coordy)
+	cp 7
+	jp z,chkmadeit     ; if frog made it to the other side (good)
+	call bonus1
+	ld hl,(score)            ;display the counter
+	ld bc,10
+	add hl,bc
+	ld (score),hl
+	ld a,(extlifep)         ;checks for extra life
+	ld b,a
+	ld de,8000
+	ld hl,$0000
+extlifechk:
+	add hl,de		
+ 	djnz extlifechk
+	ld de,(score)
+	bcall(_CPHLDE)			
+ 	call c,extralife				 
+	ld a,(coordy)       ;checks to see if you fell in the water
+        cp 35
+        call c,enemies
+        jp mainloop
+extralife:
+	ld a,(extlifep)
+	inc a
+	ld (extlifep),a     ;gives you an extra life
+	ld a,(lives)
+	inc a
+	ld (lives),a
+	ret
+bonus1:
+	ld a,10	    ;sets up bonus x and y coord etc....
+	call Random    ;Random will give you a random number 0 to a
+	cp 9
+	ret nz
+	ld a,80
+	call Random
+	add a,9
+	ld (bonus),a
+ 	ld a,7
+	call Random
+	inc a
+	ld b,a
+	ld a,63
+bonusylp:
+	sub 7
+	djnz	bonusylp	     
+	ld (bonus + 1),a
+	ret
+	
+fright:
+	ld hl,Frogright
+	ld (fimage),hl
+	ld a,(coordx)
+	add a,4
+	cp 90
+	jp nc,mainloop
+	ld (coordx),a	
+	jp mainloop
+
+fleft:
+	ld hl,Frogleft
+	ld (fimage),hl
+	ld a,(coordx)
+	add a,-4
+	cp -8
+	jp nc,mainloop
+	ld (coordx),a	
+	jp mainloop
+
+chkmadeit:
+	ld a,(coordx)      ;checks to see if you made it to other side 
+	add a,10	       ;or died
+	ld d,a	       ;x coords are put into d
+	ld a,94
+	ld bc,$000C        ;number of times to check
+chkmadeitret:
+	cp d			
+	jr c,chkmadeit2    ;loop
+	sub 8
+	dec bc
+	or a
+	jr nz,chkmadeitret
+chkmadeit2:			    
+	sub 6		
+	ld (coordx),a
+	ld hl,frogbank		;the data's in the apd buf - by Flo : was $8249 = ??
+	add hl,bc		
+	ld a,(hl)
+	cp 50			;50 means space occupied. you're dead bye bye
+	jp z,reallydead
+madeit:
+	ld (hl),50       ;you made it so 50 is loaded into space
+	ld hl,smiley
+	ld (fimage),hl
+	call update_frog
+	ld a,(froggs)    ;checks to see if 
+	dec a	         ;level is beat if froggs is 0 then level is beat
+	ld (froggs),a
+	or a	         ; 
+	jp z,beatlevel   ;
+	ld hl,(score)
+	ld bc,460
+	add hl,bc
+	ld (score),hl
+	jp movesprite
+
+pause: ld       hl,$1400    
+       ld       (pencol),hl  ; address to position small font
+       ld       hl,Pausetext     
+       bcall(_vputs)   ;display string
+       ld       hl,$1442             ; text cursor
+       ld       (pencol),hl
+       ld hl,(level)
+       call DM_HL_DECI
+       call WaitKey     ; game is paused until clear button pressed
+       jp mainloop
+
+disp_score:			; here's all the score and lives too
+	 ld       hl,$0018             ; text cursor
+         ld       (pencol),hl
+         ld       hl,(score)            ;display the counter
+         call DispHL
+	 ld       hl,$0046             ; text cursor
+         ld       (pencol),hl
+         ld       a,(lives)            ;display the counter
+	 bcall(_setxxop1)
+	 ld a,2
+	 bcall(_dispop1a)
+	 ld       hl,$0050             ; text cursor
+         ld       (pencol),hl
+	 ld       a,(timer2)            ;display the counter
+       ld l,a
+       ld h,0
+       call DispHL
+	 ret
+nobonus:
+	xor a
+	ld (bonus + 1),a
+	ret
+bonus2:
+	  ld e,a
+	  ld (y),a       ;updates bonus sprite a
+	  ld a,5
+	  ld (temp2),a
+	  ld a,(bonus)
+	  ld hl,fly
+	  call enemupdate  ;collision checked for
+	  xor a
+	  ld (temp2),a
+	  ld a,35
+	  call Random
+	  cp 1
+	  jr z,nobonus
+	  ret
+enemies:				;this does all the stuff with the enemies
+	   call CLRGBU
+	   ld a,(bonus + 1)
+	   or a
+	   call nz,bonus2
+	   ld hl,x1	
+	   ld (enumber),hl
+	   ld a,49
+	   ld (y),a
+enemloop1:
+	   ld a,(hl)
+	   cp 250		   ;250 means row finished go up
+	   jp z,enemup
+	   inc hl
+	   ld b,a
+	   ld a,(hl)
+	   ld (enumber),hl   ;memory address of x coord of enemy
+
+	   ld a,(y)   ;goes ahead and adds y coord into e
+	   ld e,a 
+	   
+	   ld a,b
+	   or a
+	   jp z,threefastrucks
+	   cp 1
+	   jp z,onecar
+	   cp 2
+	   jp z,threecars		;selects enemy
+	   cp 3
+	   jp z,carfast
+	   cp 4
+	   jp z,truckfast
+	   cp 5
+	   jp z,threeturtlesright
+	   cp 6
+	   jp z,threeturtlesleft
+	   cp 7
+	   jp z,twologsright
+	   cp 8
+	   jp z,twologsleft
+	   cp 9
+	   jp z,twoturtlesright
+	   cp 10
+	   jp z,threetrucks
+	   cp 11
+	   jp z,fasturtles
+	   cp 12
+	   jp z,logright
+	   jp threefastcars
+enemlpstart:	   
+	   ld hl,(enumber)
+	   inc hl
+	   jr enemloop1 
+enemup:
+	ld a,(y)		;decreases the y coord of enemies (goes up a row)
+	sub 7
+	cp 7
+	jr z,enemfinish
+	ld (y),a
+	inc hl
+	jr enemloop1
+enemfinish:
+	call update_frog   ;update screen and go back 
+	ret
+
+onecar:	   		; all the code for each enemy
+	   ld hl,car
+	   call enemleft
+	   call enemupdate
+	   call storecoord
+	   jr enemlpstart	 
+threecars:
+	   ld hl,car
+	   call enemleft
+	   call enemupdate	
+	   call storecoord  
+	   call addcarsprite
+	   call addcarsprite	
+	   jr enemlpstart
+	  
+carfast:
+	   ld hl,car
+	   call enemleft
+	   dec a
+ 	   call enemupdate
+	   call storecoord 
+	   jr enemlpstart	
+truckfast:
+	   ld hl,truck
+	   call enemright	   
+	   inc a
+ 	   call enemupdate
+	   call storecoord
+	   jr enemlpstart	    	     
+
+threeturtlesright:	   
+	   ld hl,turtle  
+	   call enemright
+	   call enemupdate
+	   call storecoord
+	   call addturtlesprite
+	   call addturtlesprite
+	   jp enemlpstart
+
+threeturtlesleft:	   
+	   ld hl,turtle
+	   ld a,1
+	   ld (temp2),a
+	   call enemleft
+	   call enemupdate
+	   call storecoord	   
+	   call addturtlesprite
+	   call addturtlesprite
+	   xor a
+	   ld (temp2),a
+	   jp enemlpstart
+twologsright:
+	   ld hl,log
+	   call enemright
+	   call enemupdate
+	   call storecoord
+	   call addlogsprite
+	   jp enemlpstart
+twologsleft:	  	   
+	   ld hl,log
+	   ld a,1
+	   ld (temp2),a      ;temp2 updates frog on back of log if going right
+	   call enemleft	   
+  	   call enemupdate
+	   call storecoord
+	   call addlogsprite
+	   xor a
+	   ld (temp2),a	   
+	   jp enemlpstart
+
+twoturtlesright:	   
+	   ld hl,turtle        
+	   call enemright
+	   inc a
+	   call enemupdate
+	   call storecoord	   
+	   call addturtlesprite
+	   jp enemlpstart 
+
+threetrucks:
+	   ld hl,truck
+	   call enemright
+	   call enemupdate
+	   call storecoord  
+	   call addtrucksprite
+	   call addtrucksprite	
+	   jp enemlpstart
+threefastrucks:
+	   ld hl,truck
+	   call enemright
+	   inc a
+	   call enemupdate
+	   call storecoord  
+	   call addtrucksprite
+	   call addtrucksprite	
+	   jp enemlpstart
+fasturtles:	   
+	   ld hl,turtle
+	   ld a,1
+	   ld (temp2),a
+	   call enemleft
+	   dec a
+	   call enemupdate
+	   call storecoord
+	   call enemshite
+	   call addturtlesprite
+	   call enemshite
+	   xor a	   
+	   ld (temp2),a
+	   jp enemlpstart
+logright:
+	   ld hl,log
+	   call enemright
+	   inc a
+	   call enemupdate
+	   call storecoord
+	   call enemshite
+	   jp enemlpstart
+threefastcars:
+	   ld hl,car
+	   call enemleft
+	   dec a
+	   call enemupdate
+	   call storecoord  
+	   call addcarsprite
+	   call addcarsprite	
+	   jp enemlpstart
+
+addcarsprite:
+         ld hl,car
+addsprite:
+	   ld a,(y)
+	   ld e,a
+	   ld a,(x)
+	   cp 9
+	   ret c
+	   sub 12
+	   call enemupdate
+	   ret
+addtrucksprite:
+	  ld hl,truck
+	  ld a,(x)
+	  dec a
+	  dec a
+	  ld (x),a
+	  jr addsprite
+enemright:
+	 ld bc,(enumber)
+       ld a,(bc)
+	 inc a
+	 ret
+enemleft:
+	  ld bc,(enumber)
+	  ld a,(bc)
+	  dec a
+	  ret
+storecoord:
+	      ld a,(x)
+	      ld hl,(enumber) ;stores x coordinate of enemy for later use
+	      ld (hl),a
+	      ret
+addlogsprite:
+	   ld a,(y)
+	   ld e,a
+	   ld hl,log
+	   ld a,(x)
+	   cp 9
+	   ret c
+	   sub 8
+	   call enemupdate
+           ret
+
+addturtlesprite:
+	   ld a,(y)
+	   ld e,a
+	   ld hl,turtle	   
+	   ld a,(x)
+	   cp 9
+	   ret c
+	   sub 8
+	   call enemupdate
+           ret
+	
+enemupdate:
+	   ld (x),a
+	   or a            ;or a is the same as cp 0 except 1 byte less!!
+	   jr z,new_nemies  ;this goes to the routine that makes the enemy
+	   cp 116
+	   jp nc,new_nemies2
+newret:                   ; start over when the edge of screen is met 
+	   cp 90
+	   ret nc
+   	   call sprite      ;put enemy's sprite into memory 
+
+	   call delay       ;slows down game so it doesn't go too fast
+	   call delay
+enemshite:         	
+	   ld a,(y)         
+	   ld e,a   
+	   ld a,(coordy) 
+	   cp e              ; check to see if frog is on same row as enemy
+	   jr z,collision    ; if so check for collision
+chkret: 
+	   ret	   
+        
+collision:
+	   ld a,(x)
+	   ld e,a           ;coordinates are checked all around frog
+	   ld a,(coordx)	  ;to see if it has collided with anything
+	   sub 4
+	   ld b,9
+colloop2:	   
+           call chkcol
+	   jr z,aftchk           ;returns if no collision  
+	   djnz colloop2
+	   jr chkret
+
+aftchk:  
+           ld a,(temp2)
+	   cp 5
+	   jp z,gotbonus
+	   ld a,1            ; you're dead
+	   ld (temp),a      ; sets temp to 1 if dead
+           ld a,(coordy)
+           cp 35              ; if you're on a turtle or log's back
+	   jr c,onlogback
+           jr chkret
+
+onlogback:  ;updates you when on the back of lily pad or log
+	  ld a,(temp2)
+	  cp 1
+	  jr z,onlogleft
+	  ld a,(coordx)
+	  inc a
+	  ld (coordx),a
+	  jr chkret
+onlogleft:
+    	  ld a,(coordx)     ;updates you going left on back of something
+	  dec a
+	  ld (coordx),a
+	  jr chkret
+	 
+new_nemies:
+	   ld a,116	 ;enemy sprite starts over at far right on screen
+	   ld (x),a
+	   jp newret
+
+new_nemies2:
+	   xor a
+	   ld (x),a       ;enemy sprite has started over at far left of screen
+	   jp newret
+gotbonus:
+	 ld hl,(score)     ;you got the bonus and win 200 points
+	 ld de,200
+	 add hl,de
+	 ld (score),hl
+	 xor a
+	 ld (bonus + 1),a
+	 ld (temp2),a
+	 ret
+
+chkcol:
+         inc a    ;checks for collisions at different positions
+         cp e
+	 ret
+timer:
+	ld a,(timer2)      ;counts down to zero then you die
+	dec a
+	ld (timer2),a
+	jp nz,timereturn
+	jp reallydead
+ 
+update_frog:              ;this routine updates the entire screen and 
+	   ld hl,(fimage) ; draws your frog according to what's stored
+ 	   	          ; in fimage
+	   ld a,(coordy)
+	   ld e,a
+	   ld a,(coordx)
+	   
+	   call sprite
+	   bcall(_copygbuf)
+	   call disp_score
+	   ret
+
+delay:
+	ld a,(delval)
+	ld b,a
+del2:
+	push bc  ;temp storage of bc
+	pop bc   ;recall bc
+	djnz del2 ;b-l->b if b=0 return else do it again
+	ret
+
+;;;;;;;;;;;;;;;;;;;;
+;;;              ;;;
+;;;  DM_HL_DECI  ;;;
+;;;              ;;;
+;;;;;;;;;;;;;;;;;;;;
+
+DM_HL_DECI:
+DispHL:
+	bcall(_setxxxxop2)
+	bcall(_op2toop1)
+	ld a,6
+	bcall(_dispop1a)
+	ret                          
+
+Dgraphic:  ;routine to display pic
+	call CLRGBU2
+	bcall(_clrLCDF) ;clear lcd not memory
+	ld hl,GRAPH_MEM
+	call straightline
+	ld hl,scorebar  ;load title
+	ld de,GRAPH_MEM+($8E35-$8E29)  ;de->graph mem
+	ld bc,72    ;192 bytes to copy
+	ldir        ;do it
+	ld hl,GRAPH_MEM+($8E72-$8E29)
+	call straightline      
+	ld a,12
+	ld b,6
+	ld de,GRAPH_MEM+($8E7D-$8E29)
+drawfrogarea:
+	push bc
+	ld hl,frogarea
+	ld bc,12  
+	ldir      
+	pop bc
+	djnz drawfrogarea
+        ld hl,GRAPH_MEM+420
+	call straightline
+        ld hl,GRAPH_MEM+504
+	call dashedline
+	ld hl,GRAPH_MEM+588
+	call dashedline      
+	ld hl,GRAPH_MEM+672
+	call straightline
+	ret
+
+straightline:
+	call hlintodeinc
+        ld bc,11
+        ld (hl),255 ; straight line
+	ldir   
+	ret     
+dashedline:
+	call hlintodeinc
+	ld bc,11    ;12 bytes to copy
+	ld (hl),240  ; dashed line
+        ldir        ;do it
+	ret
+hlintodeinc:    ;simply loads hl into de and then increases de
+	ld d,h
+	ld e,l
+	inc de
+	ret
+
+sprite:    ;or's data to draw sprite!
+        push    hl              
+        ld      hl,0            
+        ld      d,0
+        add     hl,de
+        add     hl,de
+        add     hl,de
+        add     hl,hl
+        add     hl,hl
+        ld      d,0             ; Do x/8
+        ld      e,a
+        srl     e
+        srl     e
+        srl     e
+        add     hl,de
+        ld      de,GRAPH_MEM
+        add     hl,de           ; Add address to graphbuf
+        ld      b,00000111b     ; Get the remainder of x/8
+        and     b
+        or      a               ; Is this sprite aligned to 8*n,y?
+
+        jp      z,ALIGN
+        pop     ix              ; ix->sprite
+        ld      d,a             ; d=how many bits to shift each line
+
+        ld      e,8             ; Line loop
+LILOP:  
+        ld      b,(ix+0)        ; Get sprite data
+        ld      c,0             ; Shift loop
+        push    de
+SHLOP:  
+        srl     b
+        rr      c
+        dec     d
+        jp      nz,SHLOP
+        pop     de
+        ld      a,b             ; Write line to graphbuf
+        or     (hl)
+        ld      (hl),a
+        inc     hl
+        ld      a,c
+        or     (hl)
+        ld      (hl),a
+        ld      bc,11           ; Calculate next line address
+        add     hl,bc
+        inc     ix              ; Inc spritepointer
+        dec     e
+        jp      nz,LILOP        ; Next line
+        jp      DONE1
+
+ALIGN:                          ; Blit an aligned sprite to graphbuf
+        pop     de              ; de->sprite
+        ld      b,8
+ALOP1:  ld      a,(de)
+        or      (hl)            
+        ld      (hl),a
+        inc     de
+        push    bc
+        ld      bc,12
+        add     hl,bc
+        pop     bc
+        djnz    ALOP1
+DONE1:
+        ret
+
+CLRGBU:                    
+ ld 	hl,GRAPH_MEM+156
+ ld 	de,GRAPH_MEM+157     ; this clears the graph memory
+ ld 	bc,263
+ ld 	(hl),0
+ ldir
+ ld   hl,GRAPH_MEM+432
+ ld 	de,GRAPH_MEM+433     
+ call clr 
+ ld	hl,GRAPH_MEM+516
+ ld 	de,GRAPH_MEM+517     
+ call clr
+ ld	hl,GRAPH_MEM+600
+ ld 	de,GRAPH_MEM+601    
+ call clr
+ ld	hl,GRAPH_MEM+684
+ ld 	de,GRAPH_MEM+685     
+ call clr
+ ret
+
+clr:
+ ld 	bc,71
+ ld   (hl),0
+ ldir
+ ret
+
+CLRGBU2:           
+ bcall(_grbufclr)
+ ret
+
+WaitKey:			; wait until mode key is pressed
+    	   bcall(_getk)
+ cp 9
+ jr nz, WaitKey
+ ret
+         
+
+Random:
+  ; Routine by Jimmy Mardell  
+  ; input  : A     (0 <= x < A) with x the random number to get
+  ; output : A is random number
+  	ld	b,a
+	ld	a,r
+	add	a,a
+	ld	hl,0
+	ld	d,0
+	ld	e,a
+RMul:
+	add	hl,de
+	djnz	RMul
+	ld	a,h
+	ret
+	  	
+levelinit:
+	   ld hl, frogbank   ; - Flo : was $8286 = ?
+	   ld b,7
+emptspaces:
+	   ld (hl),100
+	   inc hl
+	   ld (hl),50
+           inc hl
+	   djnz emptspaces
+	   
+	   ld 	hl,(leveladd)
+           ld 	de,APD_BUF + 6        	; load up starts for all bad guys
+           ld 	bc,26			; also loads what type of bad guy
+           ldir
+	   ret	
+
+beatlevel:
+	ld a,(delval)
+	sub 15		;make delay less so level faster
+	ld (delval),a	
+	ld a,6
+	ld (froggs),a
+	ld hl,(level)
+	inc hl
+	ld a,l
+	cp 14
+	jp z,beatgame
+	ld (level),hl
+	ld hl,(leveladd)
+	ld de,27
+	add hl,de             ;memory address of new level
+	ld (leveladd),hl      ;initialize new level
+	dec hl
+	ld a,(hl)
+	ld (timer2),a
+	call levelinit
+	call Dgraphic
+	bcall(_copygbuf)
+	jp movesprite
+beatgame:
+	  call	CLRGBU2
+	  bcall(_copygbuf)
+	  ld       hl,$1000    
+          ld       (pencol),hl  ; address to position small font
+          ld       hl,beattext     
+	  bcall(_vputs)  
+	  call WaitKey
+	  ld       hl,$1F08    
+          ld       (pencol),hl  ; address to position small font
+          ld       hl,beattext2     
+	  bcall(_vputs)  
+	  call WaitKey
+
+finish:  
+
+
+
+
+ 	  res      3, (iy+$05)  
+        bcall(_grbufclr)
+ 	  bcall(_clrLCDF)
+	  ret
+	
+Text:
+.db "FrAwG GutS - GAME OVER",0
+Text2:
+.db "bY DeRRicK wArD",0
+Text3:
+.db "FrAwG gUTs!  V1.0",0
+Text4:
+.db "Press Enter",0
+beattext:
+.db "You'vecompletedFRawGgUts.",0
+beattext2:
+.db "Long live the FRAWGS!!",0
+Pausetext:
+.db "   PAUSED     --      LeVeL",0
+
+level1:  ;first byte is the timer second byte is number of enemy (1-13) third is x coord 250 means end of horiz line -go up 
+.db 250,3,46,250,4,10,250,1,20,2,80,250,5,24,5,60,250,6,14,8,76,250,7,50,5,10,250 
+level2:
+.db 240,10,50,250,1,20,2,70,250,4,40,4,62,250,7,30,7,70,250,6,62,250,7,24,7,58,250
+level3:
+.db 240,10,20,10,58,250,4,30,250,10,60,10,6,250,8,10,250,7,40,7,60,250,8,10,8,26,250
+level4:
+.db 240,2,68,1,10,250,1,84,2,32,250,2,8,250,5,18,250,8,10,8,70,250,5,26,7,78,250
+level5:
+.db 225,13,70,3,20,250,10,110,10,60,250,13,40,250,5,28,250,8,108,250,12,20,12,28,12,48,250
+level6:
+.db 200,3,46,250,0,10,250,13,20,13,80,250,5,24,5,60,250,6,14,8,76,250,7,50,5,10,250 
+level7:
+.db 150,2,50,250,0,30,4,60,250,13,42,3,80,250,7,20,7,80,250,11,70,250,7,26,7,74,250
+level8:
+.db 190,3,20,3,70,250,13,50,250,3,26,3,78,3,48,250,5,86,250,11,20,11,76,250,5,52,250
+level9:
+.db 160,0,50,250,1,18,1,64,250,0,70,250,11,58,11,88,250,8,32,8,70,250,12,6,12,46,250
+level10:
+.db 160,10,20,10,58,250,13,70,13,30,250,0,60,0,6,250,8,110,250,11,30,11,50,250,5,36,250
+level11:
+.db 160,2,30,2,76,250,0,64,250,2,44,2,88,250,7,70,7,20,250,11,70,11,46,250,12,72,250
+level12:
+.db 160,3,14,13,42,250,13,74,250,3,100,13,36,250,12,10,12,70,250,6,70,250,9,112,250
+level13:
+.db 140,0,40,0,80,0,106,250,3,74,3,36,250,0,50,0,10,250,12,60,12,30,250,11,10,250,12,8,250
+Froggie:  ; (8*6 sprite)
+.db 00000000b
+.db 00101000b
+.db 10111010b
+.db 01111100b
+.db 00111000b
+.db 01010100b
+.db 11000110b
+.db 00000000b
+
+Frogright:
+.db 00000000b
+.db 00110100b
+.db 00001111b
+.db 00011110b
+.db 00001111b
+.db 00110100b
+.db 00000000b
+.db 00000000b
+
+Frogleft:
+.db 00000000b
+.db 00101100b
+.db 11110000b
+.db 01111000b
+.db 11110000b
+.db 00101100b
+.db 00000000b
+.db 00000000b
+Frogdown:
+.db 00000000b
+.db 01100011b
+.db 00101010b
+.db 00011100b
+.db 00111110b
+.db 01011101b
+.db 00010100b
+.db 00000000b
+log:
+.db 01111110b
+.db 10000101b
+.db 10111101b
+.db 10000101b
+.db 10111101b
+.db 10000101b
+.db 01111110b
+.db 00000000b
+car: 
+.db 00000000b
+.db 00110110b  
+.db 01111111b  
+.db 11101011b 
+.db 11101011b 
+.db 01111111b  
+.db 00110110b  
+.db 00000000b
+truck:
+.db 00000000b
+.db 01101100b
+.db 11111011b
+.db 10001011b
+.db 10001011b
+.db 11111011b
+.db 01101100b
+.db 00000000b
+turtle: 
+.db 00111100b  
+.db 01010110b  
+.db 00101010b 
+.db 01010101b 
+.db 00101001b 
+.db 01010101b  
+.db 01101010b  
+.db 00000000b  
+splat:
+.db 00000000b
+.db 01011001b
+.db 11110110b
+.db 01111100b
+.db 10111101b
+.db 01110110b
+.db 10100101b
+.db 00000000b
+fly:
+.db 00000000b
+.db 00101000b
+.db 11111110b
+.db 10010010b
+.db 01111100b
+.db 00111000b
+.db 01000100b
+.db 00000000b
+smiley:
+.db 00100100b
+.db 01011010b
+.db 00111100b
+.db 11011011b
+.db 11100111b
+.db 00111100b
+scorebar:
+.db 136,139,139,255,255,255,187,168,143,255,255,255
+.db 187,168,191,255,255,255,191,171,191,255,255,255
+.db 139,170,143,255,255,255,187,168,143,255,255,255
+.db 235,171,191,255,255,255,187,171,239,255,255,255
+.db 136,139,139,255,255,255,139,216,143,255,255,255
+frogarea:
+.db 255,0,255,0,255,0,255,0,255,0,255,00000001
+
+
+.end
+.end
+
+
